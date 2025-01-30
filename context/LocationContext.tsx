@@ -1,53 +1,21 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import * as ExpoLocation from 'expo-location';
+import { CacheService } from '@/cache';
+import { getNearbyBusinesses, YelpBusiness } from '@/data/Yelp';
+
+type CachedData = {
+  timestamp: number;
+  location: Location | null;
+  coffeeShops: YelpBusiness[];
+};
 
 type Location = ExpoLocation.LocationObject;
-
-export type LocationAddress = {
-  city: string;
-  country: string;
-  country_code: string;
-  county: string;
-  house_number: string;
-  name: string;
-  postcode: string;
-  road: string;
-  state: string;
-  suburb: string;
-};
-
-export type Shop = {
-  address: LocationAddress;
-  boundingbox: string[];
-  class: string;
-  display_name: string;
-  distance: number;
-  lat: string;
-  licence: string;
-  lon: string;
-  name: string;
-  osm_id: string;
-  osm_type: string;
-  place_id: string;
-  tag_type: string;
-  type: string;
-};
 
 type LocationContextType = {
   location: Location | null;
   setLocation: (location: Location) => void;
-  coffeeShops: Shop[];
-  setCoffeeShops: (coffeeShops: Shop[]) => void;
-};
-
-const API_KEY = 'pk.1c2ecd9be2f9c636c9bda1c52c646128';
-const tag = 'restaurant';
-
-const settings = {
-  async: true,
-  crossDomain: true,
-  url: `https://us1.locationiq.com/v1/nearby?key=${API_KEY}&lat=-37.870983&lon=144.980714&tag=${tag}&radius=30000&format=json`,
-  method: 'GET',
+  coffeeShops: YelpBusiness[];
+  setCoffeeShops: (coffeeShops: YelpBusiness[]) => void;
 };
 
 export const LocationContext: React.Context<LocationContextType | undefined> = createContext<
@@ -56,31 +24,26 @@ export const LocationContext: React.Context<LocationContextType | undefined> = c
 
 export function LocationProvider({ children }: { children: React.ReactNode }): JSX.Element {
   const [location, setLocation] = useState<Location | null>(null);
-  const [coffeeShops, setCoffeeShops] = useState<Shop[]>([]);
+  const [coffeeShops, setCoffeeShops] = useState<YelpBusiness[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  const cacheConfig = {
+    key: 'location_data',
+    expiryTime: 1000 * 60 * 60, // 1 hour
+  };
 
   const fetchCoffeeShops = useCallback(
     async (location: Location) => {
       const { latitude, longitude } = location.coords;
 
       try {
-        const response = await fetch(
-          `https://us1.locationiq.com/v1/nearby?` +
-            `key=${API_KEY}&` +
-            `lat=${latitude}&` +
-            `lon=${longitude}&` +
-            `tag=${tag}&` +
-            `radius=1000&` +
-            `format=json`
-        );
+        const yelpBusinesses = await getNearbyBusinesses(latitude, longitude);
+        setCoffeeShops(yelpBusinesses);
 
-        if (!response.ok) {
-          console.log(response);
-        }
-
-        const data = await response.json();
-
-        setCoffeeShops(data);
+        await CacheService.set(cacheConfig, {
+          location,
+          coffeeShops: yelpBusinesses,
+        });
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch coffee shops');
         console.error('API Error:', err);
@@ -92,26 +55,30 @@ export function LocationProvider({ children }: { children: React.ReactNode }): J
   useEffect(() => {
     (async () => {
       try {
+        const cached = await CacheService.get<{
+          location: Location;
+          coffeeShops: YelpBusiness[];
+        }>(cacheConfig);
+
         const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
-        console.log(status);
-        if (status !== 'granted') {
+        if (status !== 'granted') return;
+        const currentLocation = await ExpoLocation.getCurrentPositionAsync({});
+
+        if (cached && isSameLocation(cached.location, currentLocation)) {
+          console.log('data from cache');
+          setLocation(cached.location);
+          setCoffeeShops(cached.coffeeShops);
           return;
         }
 
-        const currentLocation = await ExpoLocation.getLastKnownPositionAsync({});
-
+        console.log('data from api');
         setLocation(currentLocation);
-      } catch (error) {
-        console.error(error);
+        fetchCoffeeShops(currentLocation);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Location error');
       }
     })();
   }, []);
-
-  useEffect(() => {
-    if (location) {
-      fetchCoffeeShops(location);
-    }
-  }, [location]);
 
   return (
     <LocationContext.Provider value={{ location, setLocation, coffeeShops, setCoffeeShops }}>
@@ -127,3 +94,7 @@ export function useLocation() {
   }
   return context;
 }
+
+const isSameLocation = (a: Location, b: Location) => {
+  return a.coords.latitude === b.coords.latitude && a.coords.longitude === b.coords.longitude;
+};
