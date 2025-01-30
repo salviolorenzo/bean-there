@@ -13,7 +13,3 @@ Bean There helps coffee enthusiasts find and review local coffee shops. Whether 
 - 📍 Location-based recommendations
 - 📱 Mobile-friendly interface
 - 🗺️ Interactive map integration
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
